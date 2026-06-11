@@ -307,27 +307,6 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
             else:
                 result = await chat_messages(followup_messages, model=model, tools=TOOLS_SCHEMA)
 
-        # Post-response check: if the model's own reply contains a bad weekday/date,
-        # re-prompt it to correct itself before returning to the client.
-        assistant_mismatch = _detect_weekday_date_mismatch(result.text)
-        if assistant_mismatch:
-            d = assistant_mismatch
-            result = await chat_messages(
-                messages + [
-                    Message(role="assistant", content=result.text),
-                    Message(
-                        role="user",
-                        content=(
-                            f"[SERVIDOR: Tu respuesta contiene una fecha incorrecta. "
-                            f"El {d['date'].day} de {d['month_es']} es {d['actual_es']}, "
-                            f"no {d['said']}. Corrígete y pregunta al cliente qué fecha prefiere. "
-                            f"No propongas fechas, pregunta al cliente.]"
-                        ),
-                    ),
-                ],
-                model=model,
-            )
-
         elapsed = time.perf_counter() - t0
         record_chat(
             model=model,
