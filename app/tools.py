@@ -54,6 +54,7 @@ def book_appointment(
     service: str,
     appointment_at: str,
     contact: str,
+    weekday: str | None = None,
 ) -> dict:
     """Persist a new appointment and return a confirmation payload.
 
@@ -71,6 +72,19 @@ def book_appointment(
 
     if appt_dt.date() < datetime.now(UTC).date():
         return {"ok": False, "error": f"Cannot book appointments in the past ({appt_dt.date()})."}
+
+    # If the caller specified a weekday name, verify it matches the actual date.
+    if weekday:
+        actual_weekday = WEEKDAY_NAMES[appt_dt.weekday()]
+        if weekday.strip().capitalize() != actual_weekday:
+            return {
+                "ok": False,
+                "error": (
+                    f"{appt_dt.strftime('%B %d, %Y')} is a {actual_weekday}, not a {weekday.capitalize()}. "
+                    f"Ask the customer to clarify: do they want {actual_weekday} {appt_dt.strftime('%B %d')}, "
+                    f"or a different date that is actually a {weekday.capitalize()}?"
+                ),
+            }
 
     init_db()
     appt_id = uuid.uuid4().hex[:10]
@@ -132,8 +146,12 @@ TOOLS_SCHEMA: list[dict] = [
                         "type": "string",
                         "description": "Phone number or WhatsApp handle.",
                     },
+                    "weekday": {
+                        "type": "string",
+                        "description": "Weekday name the customer mentioned (e.g. 'Thursday'). The server will verify it matches the date.",
+                    },
                 },
-                "required": ["customer_name", "service", "appointment_at", "contact"],
+                "required": ["customer_name", "service", "appointment_at", "contact", "weekday"],
             },
         },
     }
