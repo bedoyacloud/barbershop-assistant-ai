@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 import structlog
@@ -130,8 +131,16 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
         )
 
     # Always pin the system prompt; never trust the client to set it.
+    # Inject today's date so the model can validate day-of-week consistency.
+    today = date.today()
+    system_with_date = (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"Today is {today.strftime('%A, %B %d, %Y')}. "
+        f"When a customer mentions a weekday and a date together (e.g. 'Thursday the 15th'), "
+        f"verify they match before booking. If they don't match, point it out and ask for clarification."
+    )
     user_msgs = [m for m in req.messages if m.role != "system"]
-    messages = [Message(role="system", content=SYSTEM_PROMPT), *user_msgs]
+    messages = [Message(role="system", content=system_with_date), *user_msgs]
     log.info("chat_request_received", model=model, turns=len(user_msgs))
 
     t0 = time.perf_counter()

@@ -19,6 +19,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
 DB_PATH = Path(os.getenv("APPOINTMENTS_DB", "appointments.sqlite"))
 
 
@@ -61,6 +63,15 @@ def book_appointment(
         appointment_at: ISO-8601 datetime string (e.g. "2026-06-13T10:30").
         contact: Phone or WhatsApp identifier.
     """
+    # Validate that the ISO date is parseable and not in the past.
+    try:
+        appt_dt = datetime.fromisoformat(appointment_at)
+    except ValueError:
+        return {"ok": False, "error": f"Invalid date format: '{appointment_at}'. Use ISO-8601, e.g. '2026-06-19T10:30'."}
+
+    if appt_dt.date() < datetime.now(UTC).date():
+        return {"ok": False, "error": f"Cannot book appointments in the past ({appt_dt.date()})."}
+
     init_db()
     appt_id = uuid.uuid4().hex[:10]
     created_at = datetime.now(UTC).isoformat(timespec="seconds")
