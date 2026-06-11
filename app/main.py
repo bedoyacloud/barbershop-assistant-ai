@@ -74,8 +74,13 @@ def _next_weekday(day_idx: int) -> date:
 def _inject_next_weekday_hint(text: str) -> str | None:
     """If the user asks 'what/which is the next <weekday>', return a server hint."""
     text_lower = text.lower()
-    next_patterns_es = ["próximo", "proximo", "siguiente", "que dia es el", "cuál es el", "cual es el"]
-    next_patterns_en = ["next", "what day is", "when is the next"]
+    next_patterns_es = [
+        "próximo", "proximo", "próxima", "proxima",
+        "siguiente", "que dia es", "qué día es",
+        "cuál es el", "cual es el", "cuando cae", "cuándo cae",
+        "de la proxima", "de la próxima",
+    ]
+    next_patterns_en = ["next", "what day is", "when is the next", "when does"]
     all_weekdays = {**_WEEKDAYS_ES, **_WEEKDAYS_EN}
 
     is_next_question = any(p in text_lower for p in next_patterns_es + next_patterns_en)
