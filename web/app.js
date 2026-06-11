@@ -98,7 +98,7 @@ formEl.addEventListener("submit", (e) => {
 window.addEventListener("DOMContentLoaded", () => {
   renderMessage(
     "assistant",
-    "Hi! I'm Max, the assistant at Sharp & Co. How can I help you today?"
+    "¡Hola! Soy Max, el asistente de Sharp & Co. ¿En qué te puedo ayudar hoy?"
   );
   inputEl.focus();
 });
