@@ -1,0 +1,24 @@
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# LLM client (Ollama HTTP API)
+httpx==0.27.2
+
+# Observability
+prometheus-client==0.21.0
+structlog==24.4.0
+
+# Data validation
+pydantic==2.9.2
+
+# Persistence (appointment booking)
+# sqlite3 is in stdlib
+
+# Eval
+tqdm==4.66.5
+
+# Dev / testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+ruff==0.6.9

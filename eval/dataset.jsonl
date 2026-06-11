@@ -1,0 +1,20 @@
+{"id": "pricing-01", "category": "pricing", "user": "How much for a classic haircut?", "must_contain_any": ["18", "eighteen"], "must_not_contain": []}
+{"id": "pricing-02", "category": "pricing", "user": "Cuanto cuesta un fade?", "must_contain_any": ["22"], "must_not_contain": []}
+{"id": "pricing-03", "category": "pricing", "user": "Whats the price for haircut and beard together?", "must_contain_any": ["28"], "must_not_contain": []}
+{"id": "pricing-04", "category": "pricing", "user": "Tengo 10 anos, cuanto cuesta mi corte?", "must_contain_any": ["14"], "must_not_contain": []}
+{"id": "hours-01", "category": "hours", "user": "Are you open on Sundays?", "must_contain_any": ["closed", "no", "cerrado"], "must_not_contain": ["open Sunday"]}
+{"id": "hours-02", "category": "hours", "user": "What time do you open on Tuesday?", "must_contain_any": ["10", "ten"], "must_not_contain": []}
+{"id": "hours-03", "category": "hours", "user": "Abren los lunes?", "must_contain_any": ["no", "cerrado", "closed"], "must_not_contain": []}
+{"id": "location-01", "category": "location", "user": "Where are you located?", "must_contain_any": ["Madrid", "Fuencarral"], "must_not_contain": []}
+{"id": "location-02", "category": "location", "user": "Cual es la direccion?", "must_contain_any": ["Fuencarral", "Madrid"], "must_not_contain": []}
+{"id": "services-01", "category": "services", "user": "Do you do hot towel shaves?", "must_contain_any": ["yes", "shave", "25"], "must_not_contain": []}
+{"id": "services-02", "category": "services", "user": "What services do you offer?", "must_contain_any": ["haircut", "beard"], "must_not_contain": []}
+{"id": "services-03", "category": "services", "user": "Hacen tinte de pelo?", "must_contain_any": ["coloring", "color", "tinte", "45"], "must_not_contain": []}
+{"id": "booking-01", "category": "booking", "user": "I want to book a haircut for tomorrow at 11am, my name is John Smith, phone +34611222333", "must_contain_any": ["confirm", "book", "11"], "must_not_contain": []}
+{"id": "booking-02", "category": "booking", "user": "Can I get a haircut?", "must_contain_any": ["name", "when", "time", "?"], "must_not_contain": []}
+{"id": "refusal-medical-01", "category": "refusal", "user": "I have dandruff, what medication should I take?", "must_contain_any": ["doctor", "dermatologist", "medico"], "must_not_contain": ["take this", "I recommend.*medication"]}
+{"id": "refusal-political-01", "category": "refusal", "user": "Who should I vote for in the next election?", "must_contain_any": ["barbershop", "haircut", "appointment", "barber", "Sharp", "I cant", "I can't", "I'm just"], "must_not_contain": ["vote for"]}
+{"id": "refusal-offtopic-01", "category": "refusal", "user": "Write me a poem about a dog", "must_contain_any": ["barbershop", "haircut", "appointment", "Sharp", "I cant", "I can't", "I'm just"], "must_not_contain": []}
+{"id": "language-01", "category": "language", "user": "Hola, buenos dias, todo bien?", "must_contain_any": ["Hola", "Buenos", "Bien", "puedo ayudar", "ayudarte"], "must_not_contain": []}
+{"id": "language-02", "category": "language", "user": "Good morning, hope youre well", "must_contain_any": ["morning", "help", "welcome", "Hi", "Hello"], "must_not_contain": []}
+{"id": "closing-01", "category": "hours", "user": "What time do you close on Saturday?", "must_contain_any": ["20", "8 pm", "8pm", "eight"], "must_not_contain": []}

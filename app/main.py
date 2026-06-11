@@ -1,0 +1,199 @@
+"""
+FastAPI service for the Barbershop Assistant AI.
+
+Design notes:
+    - Stateless server. The client (web UI) keeps the conversation history
+      and sends the full message list on every turn. This lets us scale
+      horizontally with no shared session store.
+    - System prompt is loaded once at startup from a versioned markdown
+      file (`app/prompts/barber_system.md`). Editing it is a regular code
+      change, reviewable in a PR.
+    - The model is configurable per request via `?model=...`, which is
+      what powers the multi-model benchmark in milestone M11.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import structlog
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from app.llm_client import DEFAULT_MODEL, ChatMetrics, Message, chat_messages
+from app.logging_config import configure_logging
+from app.metrics import APP_INFO, record_chat, record_tool_call, render_latest
+from app.tools import TOOLS_SCHEMA, execute_tool, init_db, list_appointments
+
+configure_logging()
+log = structlog.get_logger()
+APP_VERSION = "0.1.0"
+APP_INFO.labels(version=APP_VERSION).set(1)
+
+BASE_DIR = Path(__file__).parent
+PROJECT_ROOT = BASE_DIR.parent
+WEB_DIR = PROJECT_ROOT / "web"
+SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "barber_system.md"
+SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+
+ALLOWED_MODELS = {"llama3.2:3b", "qwen2.5:3b"}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="Barbershop Assistant AI",
+    version="0.1.0",
+    description="Local LLM assistant for barbershop bookings, with MLOps observability.",
+    lifespan=lifespan,
+)
+
+# Permissive CORS for local dev. Tighten in production.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class ChatRequest(BaseModel):
+    messages: list[Message] = Field(..., min_length=1)
+    model: str | None = None
+
+
+class ToolCallExecuted(BaseModel):
+    name: str
+    arguments: dict
+    result: dict
+
+
+class ChatResponseAPI(BaseModel):
+    text: str
+    tool_calls: list[ToolCallExecuted] = []
+    metrics: ChatMetrics
+
+
+if WEB_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> FileResponse:
+        return FileResponse(str(WEB_DIR / "index.html"))
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok", "default_model": DEFAULT_MODEL}
+
+
+@app.get("/info")
+async def info() -> dict:
+    return {
+        "default_model": DEFAULT_MODEL,
+        "allowed_models": sorted(ALLOWED_MODELS),
+        "system_prompt_chars": len(SYSTEM_PROMPT),
+    }
+
+
+@app.get("/appointments")
+async def appointments_endpoint() -> list[dict]:
+    return list_appointments()
+
+
+@app.get("/metrics")
+async def metrics_endpoint() -> Response:
+    body, ctype = render_latest()
+    return Response(content=body, media_type=ctype)
+
+
+@app.post("/chat", response_model=ChatResponseAPI)
+async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
+    request_id = uuid.uuid4().hex[:8]
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+
+    model = req.model or DEFAULT_MODEL
+    if model not in ALLOWED_MODELS:
+        log.warning("model_not_allowed", model=model)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model}' is not in the allowed list: {sorted(ALLOWED_MODELS)}",
+        )
+
+    # Always pin the system prompt; never trust the client to set it.
+    user_msgs = [m for m in req.messages if m.role != "system"]
+    messages = [Message(role="system", content=SYSTEM_PROMPT), *user_msgs]
+    log.info("chat_request_received", model=model, turns=len(user_msgs))
+
+    t0 = time.perf_counter()
+    status = "ok"
+    try:
+        result = await chat_messages(messages, model=model, tools=TOOLS_SCHEMA)
+
+        # Agent loop: if the model called tools, run them and re-prompt for a
+        # natural-language confirmation.
+        executed: list[ToolCallExecuted] = []
+        if result.tool_calls:
+            followup_messages = list(messages) + [
+                Message(role="assistant", content=result.text, tool_calls=result.tool_calls)
+            ]
+            for call in result.tool_calls:
+                tool_result = execute_tool(call.name, call.arguments)
+                tool_status = "ok" if tool_result.get("ok") else "error"
+                record_tool_call(call.name, tool_status)
+                log.info(
+                    "tool_executed",
+                    tool=call.name,
+                    status=tool_status,
+                    arguments=call.arguments,
+                )
+                executed.append(
+                    ToolCallExecuted(name=call.name, arguments=call.arguments, result=tool_result)
+                )
+                followup_messages.append(Message(role="tool", content=str(tool_result)))
+            result = await chat_messages(followup_messages, model=model, tools=TOOLS_SCHEMA)
+
+        elapsed = time.perf_counter() - t0
+        record_chat(
+            model=model,
+            status=status,
+            request_duration_s=elapsed,
+            generation_duration_s=result.metrics.eval_duration_s,
+            prompt_tokens=result.metrics.prompt_tokens,
+            output_tokens=result.metrics.output_tokens,
+            tokens_per_second=result.metrics.tokens_per_second,
+        )
+        log.info(
+            "chat_request_completed",
+            model=model,
+            elapsed_s=round(elapsed, 2),
+            tokens_per_second=round(result.metrics.tokens_per_second, 2),
+            output_tokens=result.metrics.output_tokens,
+            tool_calls=len(executed),
+        )
+        return ChatResponseAPI(text=result.text, tool_calls=executed, metrics=result.metrics)
+    except Exception:
+        status = "error"
+        elapsed = time.perf_counter() - t0
+        record_chat(
+            model=model,
+            status=status,
+            request_duration_s=elapsed,
+            generation_duration_s=0,
+            prompt_tokens=0,
+            output_tokens=0,
+            tokens_per_second=0,
+        )
+        log.exception("chat_request_failed", model=model)
+        raise
+    finally:
+        structlog.contextvars.clear_contextvars()

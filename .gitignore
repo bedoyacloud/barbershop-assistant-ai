@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Environment & secrets
+.env
+.env.local
+*.pem
+*.key
+credentials.json
+
+# Data & models (heavy)
+*.sqlite
+*.db
+ollama_data/
+models/
+*.gguf
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Eval outputs (regenerated)
+eval/results/
+eval/*.csv
+
+# Docker
+docker-compose.override.yml
+
+# Personal session notes — not for the repo
+SESSION_NOTES.md
+
