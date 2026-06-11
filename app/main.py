@@ -14,10 +14,11 @@ Design notes:
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import structlog
@@ -44,6 +45,52 @@ SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "barber_system.md"
 SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 ALLOWED_MODELS = {"llama3.2:3b", "qwen2.5:3b", "qwen2.5:7b", "llama3.1:8b"}
+
+_WEEKDAYS_ES = {
+    "lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2,
+    "jueves": 3, "viernes": 4, "sábado": 5, "sabado": 5, "domingo": 6,
+}
+_WEEKDAYS_EN = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+_WEEKDAY_NAME_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_WEEKDAY_NAME_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_MONTHS_ES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+}
+
+def _detect_weekday_date_mismatch(text: str) -> str | None:
+    """Return a warning string if the message contains a weekday+date that don't match."""
+    text_lower = text.lower()
+    all_weekdays = {**_WEEKDAYS_ES, **_WEEKDAYS_EN}
+
+    for day_name, day_idx in all_weekdays.items():
+        if day_name not in text_lower:
+            continue
+        # Look for a day number near the weekday mention (e.g. "jueves 15", "thursday the 15th")
+        numbers = re.findall(r"\b([12]?\d)\b", text_lower)
+        for num_str in numbers:
+            day_num = int(num_str)
+            if not 1 <= day_num <= 31:
+                continue
+            # Find the next date with this day number
+            today = date.today()
+            for delta in range(0, 366):
+                candidate = today + timedelta(days=delta)
+                if candidate.day == day_num:
+                    actual_idx = candidate.weekday()
+                    if actual_idx != day_idx:
+                        actual_es = _WEEKDAY_NAME_ES[actual_idx]
+                        actual_en = _WEEKDAY_NAME_EN[actual_idx]
+                        return (
+                            f"[SERVER DATE CHECK: The customer said '{day_name} {day_num}' "
+                            f"but {candidate.strftime('%B %d, %Y')} is a {actual_en} ({actual_es}), "
+                            f"NOT {day_name}. You MUST point this out immediately before asking anything else.]"
+                        )
+                    break  # date found and it matches — no warning needed
+    return None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -140,6 +187,17 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
         f"verify they match before booking. If they don't match, point it out and ask for clarification."
     )
     user_msgs = [m for m in req.messages if m.role != "system"]
+
+    # Server-side date check: inject a warning into the last user message if
+    # the customer mentioned a weekday+date combination that doesn't match.
+    last_user_text = next((m.content for m in reversed(user_msgs) if m.role == "user"), "")
+    warning = _detect_weekday_date_mismatch(last_user_text)
+    if warning:
+        log.info("date_mismatch_detected", warning=warning)
+        user_msgs = user_msgs[:-1] + [
+            Message(role="user", content=f"{last_user_text}\n\n{warning}")
+        ]
+
     messages = [Message(role="system", content=system_with_date), *user_msgs]
     log.info("chat_request_received", model=model, turns=len(user_msgs))
 
