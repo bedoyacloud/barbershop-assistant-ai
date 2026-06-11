@@ -60,4 +60,4 @@ def test_tools_schema_shape():
     assert isinstance(tools.TOOLS_SCHEMA, list)
     assert tools.TOOLS_SCHEMA[0]["type"] == "function"
     required = tools.TOOLS_SCHEMA[0]["function"]["parameters"]["required"]
-    assert set(required) == {"customer_name", "service", "appointment_at", "contact"}
+    assert set(required) == {"customer_name", "service", "appointment_at", "contact", "weekday"}
