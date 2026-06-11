@@ -21,8 +21,7 @@ def test_info_exposes_allowed_models():
     r = _client().get("/info")
     assert r.status_code == 200
     body = r.json()
-    assert "qwen2.5:3b" in body["allowed_models"]
-    assert "llama3.2:3b" in body["allowed_models"]
+    assert "qwen2.5:7b" in body["allowed_models"]
 
 
 def test_metrics_endpoint_returns_prometheus_text():

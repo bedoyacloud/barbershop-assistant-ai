@@ -44,7 +44,7 @@ WEB_DIR = PROJECT_ROOT / "web"
 SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "barber_system.md"
 SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
-ALLOWED_MODELS = {"llama3.2:3b", "qwen2.5:3b", "qwen2.5:7b", "llama3.1:8b"}
+ALLOWED_MODELS = {"qwen2.5:7b"}
 
 _WEEKDAYS_ES = {
     "lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2,
