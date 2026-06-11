@@ -60,6 +60,41 @@ _MONTHS_ES = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
 }
+_MONTHS_ES_INV = {v: k for k, v in _MONTHS_ES.items()}
+
+def _next_weekday(day_idx: int) -> date:
+    """Return the next future date for the given weekday index (0=Monday)."""
+    today = date.today()
+    days_ahead = (day_idx - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7  # "next thursday" when today IS thursday → next week
+    return today + timedelta(days=days_ahead)
+
+
+def _inject_next_weekday_hint(text: str) -> str | None:
+    """If the user asks 'what/which is the next <weekday>', return a server hint."""
+    text_lower = text.lower()
+    next_patterns_es = ["próximo", "proximo", "siguiente", "que dia es el", "cuál es el", "cual es el"]
+    next_patterns_en = ["next", "what day is", "when is the next"]
+    all_weekdays = {**_WEEKDAYS_ES, **_WEEKDAYS_EN}
+
+    is_next_question = any(p in text_lower for p in next_patterns_es + next_patterns_en)
+    if not is_next_question:
+        return None
+
+    for day_name, day_idx in all_weekdays.items():
+        if day_name in text_lower:
+            next_date = _next_weekday(day_idx)
+            es_name = _WEEKDAY_NAME_ES[day_idx]
+            month_es = _MONTHS_ES_INV[next_date.month]
+            return (
+                f"[SERVER DATE INFO: The next {day_name} after today "
+                f"({date.today().strftime('%A %B %d, %Y')}) "
+                f"is {next_date.strftime('%B %d, %Y')} ({es_name} {next_date.day} de "
+                f"{month_es}). Use this exact date.]"
+            )
+    return None
+
 
 def _detect_weekday_date_mismatch(text: str) -> str | None:
     """Return a warning string if the message contains a weekday+date that don't match."""
@@ -189,9 +224,19 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
     )
     user_msgs = [m for m in req.messages if m.role != "system"]
 
+    last_user_text = next((m.content for m in reversed(user_msgs) if m.role == "user"), "")
+
+    # Inject next-weekday hint so model doesn't have to calculate it.
+    weekday_hint = _inject_next_weekday_hint(last_user_text)
+    if weekday_hint:
+        log.info("weekday_hint_injected", hint=weekday_hint)
+        user_msgs = user_msgs[:-1] + [
+            Message(role="user", content=f"{last_user_text}\n\n{weekday_hint}")
+        ]
+        last_user_text = user_msgs[-1].content
+
     # Server-side date check: if the last user message contains a weekday+date
     # mismatch, return the correction immediately — no LLM call, no hallucination risk.
-    last_user_text = next((m.content for m in reversed(user_msgs) if m.role == "user"), "")
     warning = _detect_weekday_date_mismatch(last_user_text)
     if warning:
         log.info("date_mismatch_detected", warning=warning)
