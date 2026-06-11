@@ -102,6 +102,10 @@ def _inject_next_weekday_hint(text: str) -> str | None:
 def _detect_weekday_date_mismatch(text: str) -> dict | None:
     """Return mismatch info dict if the message contains a weekday+date that don't match."""
     text_lower = text.lower()
+    # Remove time patterns (15:00) and duration phrases (en 8, en 8 días) before
+    # scanning for day numbers — otherwise "a las 15:00" or "en 8 días" trigger false positives.
+    text_lower = re.sub(r"\b\d{1,2}:\d{2}\b", "", text_lower)
+    text_lower = re.sub(r"\ben\s+\d+", "", text_lower)
     all_weekdays = {**_WEEKDAYS_ES, **_WEEKDAYS_EN}
 
     for day_name, day_idx in all_weekdays.items():
