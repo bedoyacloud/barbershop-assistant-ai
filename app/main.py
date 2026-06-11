@@ -71,49 +71,68 @@ def _next_weekday(day_idx: int) -> date:
     return today + timedelta(days=days_ahead)
 
 
-def _resolve_relative_date(text: str) -> str | None:
-    """Detect relative date expressions and return a server hint with the exact date.
+def _replace_relative_dates(text: str) -> str:
+    """Replace relative date expressions with explicit absolute dates in the user message.
+
+    Transforming the text directly is more reliable than injecting a hint — the model
+    sees the final date string and doesn't need to interpret any meta-instruction.
 
     Handles: mañana, pasado mañana, en N días/semanas, de hoy/mañana en N
-    (the last form is a Latin American colloquialism meaning N-1 days from today/tomorrow).
+    (the last form is a Latin American colloquialism: "de hoy en 8" = 7 days from today,
+    counting today as day 1).
     """
-    t = text.lower()
     today = date.today()
 
-    def _fmt(d: date) -> str:
+    def _es(d: date) -> str:
         return (
-            f"{_WEEKDAY_NAME_ES[d.weekday()]} {d.day} de "
+            f"el {_WEEKDAY_NAME_ES[d.weekday()]} {d.day} de "
             f"{_MONTHS_ES_INV[d.month]} de {d.year}"
         )
 
-    # "de hoy en N" / "de mañana en N"  →  Latin American "N days from today/tomorrow"
-    # Colloquially "de hoy en 8" = one week from today (today counts as day 1 → +7 days)
-    m = re.search(r"\bde\s+(hoy|mañana|manana)\s+en\s+(\d+)\b", t)
-    if m:
-        base = today if m.group(1) == "hoy" else today + timedelta(days=1)
-        n = int(m.group(2))
-        target = base + timedelta(days=n - 1)  # "en 8" counting base as day 1 → +7
-        return f"[SERVIDOR: '{m.group(0)}' es el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+    # Order matters: longest/most-specific patterns first.
 
-    # "en N días" / "en N semanas"
-    m = re.search(r"\ben\s+(\d+)\s+(d[ií]as?|semanas?)\b", t)
-    if m:
+    # "de mañana/hoy en N"  →  base + (N-1) days
+    def _de_x_en_n(m: re.Match) -> str:
+        base = today if "hoy" in m.group(1).lower() else today + timedelta(days=1)
+        return _es(base + timedelta(days=int(m.group(2)) - 1))
+
+    text = re.sub(
+        r"\bde\s+(hoy|mañana|manana)\s+en\s+(\d+)\b",
+        _de_x_en_n,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # "en N días / en N semanas"
+    def _en_n_x(m: re.Match) -> str:
         n = int(m.group(1))
-        days = n if "d" in m.group(2) else n * 7
-        target = today + timedelta(days=days)
-        return f"[SERVIDOR: En {m.group(1)} {m.group(2)} será el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+        days = n if m.group(2)[0].lower() == "d" else n * 7
+        return _es(today + timedelta(days=days))
+
+    text = re.sub(
+        r"\ben\s+(\d+)\s+(d[ií]as?|semanas?)\b",
+        _en_n_x,
+        text,
+        flags=re.IGNORECASE,
+    )
 
     # "pasado mañana"
-    if re.search(r"\bpasado\s+ma[ñn]ana\b", t):
-        target = today + timedelta(days=2)
-        return f"[SERVIDOR: Pasado mañana es el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+    text = re.sub(
+        r"\bpasado\s+ma[ñn]ana\b",
+        _es(today + timedelta(days=2)),
+        text,
+        flags=re.IGNORECASE,
+    )
 
-    # "mañana" alone (not already caught above)
-    if re.search(r"\bma[ñn]ana\b", t):
-        target = today + timedelta(days=1)
-        return f"[SERVIDOR: Mañana es el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+    # "mañana" alone (after compound patterns above are already consumed)
+    text = re.sub(
+        r"\bma[ñn]ana\b",
+        _es(today + timedelta(days=1)),
+        text,
+        flags=re.IGNORECASE,
+    )
 
-    return None
+    return text
 
 
 def _inject_next_weekday_hint(text: str) -> str | None:
@@ -276,13 +295,20 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
 
     last_user_text = next((m.content for m in reversed(user_msgs) if m.role == "user"), "")
 
-    # Inject date hints so the model never has to do calendar arithmetic.
-    # Priority: relative-date expressions first, then next-weekday queries.
-    date_hint = _resolve_relative_date(last_user_text) or _inject_next_weekday_hint(last_user_text)
-    if date_hint:
-        log.info("date_hint_injected", hint=date_hint)
+    # Replace relative date expressions with absolute dates before the LLM sees the message.
+    # Transformation is more reliable than hints — the model reads the resolved date directly.
+    replaced = _replace_relative_dates(last_user_text)
+    if replaced != last_user_text:
+        log.info("relative_date_replaced", original=last_user_text, replaced=replaced)
+        user_msgs = user_msgs[:-1] + [Message(role="user", content=replaced)]
+        last_user_text = replaced
+
+    # For "próximo jueves"-style questions, inject a server hint (weekday arithmetic).
+    weekday_hint = _inject_next_weekday_hint(last_user_text)
+    if weekday_hint:
+        log.info("weekday_hint_injected", hint=weekday_hint)
         user_msgs = user_msgs[:-1] + [
-            Message(role="user", content=f"{last_user_text}\n\n{date_hint}")
+            Message(role="user", content=f"{last_user_text}\n\n{weekday_hint}")
         ]
         last_user_text = user_msgs[-1].content
 
