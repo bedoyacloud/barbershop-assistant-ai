@@ -169,6 +169,7 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
     request_id = uuid.uuid4().hex[:8]
     structlog.contextvars.bind_contextvars(request_id=request_id)
 
+    t0 = time.perf_counter()
     model = req.model or DEFAULT_MODEL
     if model not in ALLOWED_MODELS:
         log.warning("model_not_allowed", model=model)
@@ -188,20 +189,31 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
     )
     user_msgs = [m for m in req.messages if m.role != "system"]
 
-    # Server-side date check: inject a warning into the last user message if
-    # the customer mentioned a weekday+date combination that doesn't match.
+    # Server-side date check: if the last user message contains a weekday+date
+    # mismatch, return the correction immediately — no LLM call, no hallucination risk.
     last_user_text = next((m.content for m in reversed(user_msgs) if m.role == "user"), "")
     warning = _detect_weekday_date_mismatch(last_user_text)
     if warning:
         log.info("date_mismatch_detected", warning=warning)
-        user_msgs = user_msgs[:-1] + [
-            Message(role="user", content=f"{last_user_text}\n\n{warning}")
-        ]
+        # Extract the human-readable part of the warning for the response
+        correction = re.search(r"but (.+?)\. You MUST", warning)
+        correction_text = correction.group(1) if correction else warning
+        dummy_metrics = ChatMetrics(
+            model=model, prompt_tokens=0, output_tokens=0,
+            total_duration_s=0, eval_duration_s=0, tokens_per_second=0,
+        )
+        reply = (
+            f"Hay un error en la fecha: {correction_text}. "
+            f"¿Quieres reservar para ese día real, o prefieres una fecha diferente?"
+        ) if any(w in last_user_text.lower() for w in _WEEKDAYS_ES) else (
+            f"There's a date error: {correction_text}. "
+            f"Would you like to book for that actual day, or a different date?"
+        )
+        return ChatResponseAPI(text=reply, tool_calls=[], metrics=dummy_metrics)
 
     messages = [Message(role="system", content=system_with_date), *user_msgs]
     log.info("chat_request_received", model=model, turns=len(user_msgs))
 
-    t0 = time.perf_counter()
     status = "ok"
     try:
         result = await chat_messages(messages, model=model, tools=TOOLS_SCHEMA)
