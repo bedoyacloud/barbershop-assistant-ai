@@ -71,6 +71,51 @@ def _next_weekday(day_idx: int) -> date:
     return today + timedelta(days=days_ahead)
 
 
+def _resolve_relative_date(text: str) -> str | None:
+    """Detect relative date expressions and return a server hint with the exact date.
+
+    Handles: mañana, pasado mañana, en N días/semanas, de hoy/mañana en N
+    (the last form is a Latin American colloquialism meaning N-1 days from today/tomorrow).
+    """
+    t = text.lower()
+    today = date.today()
+
+    def _fmt(d: date) -> str:
+        return (
+            f"{_WEEKDAY_NAME_ES[d.weekday()]} {d.day} de "
+            f"{_MONTHS_ES_INV[d.month]} de {d.year}"
+        )
+
+    # "de hoy en N" / "de mañana en N"  →  Latin American "N days from today/tomorrow"
+    # Colloquially "de hoy en 8" = one week from today (today counts as day 1 → +7 days)
+    m = re.search(r"\bde\s+(hoy|mañana|manana)\s+en\s+(\d+)\b", t)
+    if m:
+        base = today if m.group(1) == "hoy" else today + timedelta(days=1)
+        n = int(m.group(2))
+        target = base + timedelta(days=n - 1)  # "en 8" counting base as day 1 → +7
+        return f"[SERVIDOR: '{m.group(0)}' es el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+
+    # "en N días" / "en N semanas"
+    m = re.search(r"\ben\s+(\d+)\s+(d[ií]as?|semanas?)\b", t)
+    if m:
+        n = int(m.group(1))
+        days = n if "d" in m.group(2) else n * 7
+        target = today + timedelta(days=days)
+        return f"[SERVIDOR: En {m.group(1)} {m.group(2)} será el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+
+    # "pasado mañana"
+    if re.search(r"\bpasado\s+ma[ñn]ana\b", t):
+        target = today + timedelta(days=2)
+        return f"[SERVIDOR: Pasado mañana es el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+
+    # "mañana" alone (not already caught above)
+    if re.search(r"\bma[ñn]ana\b", t):
+        target = today + timedelta(days=1)
+        return f"[SERVIDOR: Mañana es el {_fmt(target)}. Usa esta fecha exacta en tu respuesta.]"
+
+    return None
+
+
 def _inject_next_weekday_hint(text: str) -> str | None:
     """If the user asks 'what/which is the next <weekday>', return a server hint."""
     text_lower = text.lower()
@@ -231,12 +276,13 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
 
     last_user_text = next((m.content for m in reversed(user_msgs) if m.role == "user"), "")
 
-    # Inject next-weekday hint so model doesn't have to calculate it.
-    weekday_hint = _inject_next_weekday_hint(last_user_text)
-    if weekday_hint:
-        log.info("weekday_hint_injected", hint=weekday_hint)
+    # Inject date hints so the model never has to do calendar arithmetic.
+    # Priority: relative-date expressions first, then next-weekday queries.
+    date_hint = _resolve_relative_date(last_user_text) or _inject_next_weekday_hint(last_user_text)
+    if date_hint:
+        log.info("date_hint_injected", hint=date_hint)
         user_msgs = user_msgs[:-1] + [
-            Message(role="user", content=f"{last_user_text}\n\n{weekday_hint}")
+            Message(role="user", content=f"{last_user_text}\n\n{date_hint}")
         ]
         last_user_text = user_msgs[-1].content
 
