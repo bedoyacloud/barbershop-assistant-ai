@@ -155,6 +155,7 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
             followup_messages = list(messages) + [
                 Message(role="assistant", content=result.text, tool_calls=result.tool_calls)
             ]
+            tool_rejected: str | None = None
             for call in result.tool_calls:
                 tool_result = execute_tool(call.name, call.arguments)
                 tool_status = "ok" if tool_result.get("ok") else "error"
@@ -168,8 +169,28 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
                 executed.append(
                     ToolCallExecuted(name=call.name, arguments=call.arguments, result=tool_result)
                 )
+                if tool_status == "error":
+                    tool_rejected = tool_result.get("error", "The booking could not be completed.")
                 followup_messages.append(Message(role="tool", content=str(tool_result)))
-            result = await chat_messages(followup_messages, model=model, tools=TOOLS_SCHEMA)
+
+            # If any tool rejected the request, skip the follow-up LLM call
+            # and return the validation error directly — the model cannot override it.
+            if tool_rejected:
+                result = await chat_messages(
+                    followup_messages + [
+                        Message(
+                            role="user",
+                            content=(
+                                "The booking failed with this error: "
+                                f'"{tool_rejected}". '
+                                "Inform the customer clearly and ask them to clarify."
+                            ),
+                        )
+                    ],
+                    model=model,
+                )
+            else:
+                result = await chat_messages(followup_messages, model=model, tools=TOOLS_SCHEMA)
 
         elapsed = time.perf_counter() - t0
         record_chat(
