@@ -262,6 +262,27 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
             else:
                 result = await chat_messages(followup_messages, model=model, tools=TOOLS_SCHEMA)
 
+        # Post-response check: if the model's own reply contains a bad weekday/date,
+        # re-prompt it to correct itself before returning to the client.
+        assistant_warning = _detect_weekday_date_mismatch(result.text)
+        if assistant_warning:
+            correction = re.search(r"but (.+?)\. You MUST", assistant_warning)
+            correction_text = correction.group(1) if correction else assistant_warning
+            result = await chat_messages(
+                messages + [
+                    Message(role="assistant", content=result.text),
+                    Message(
+                        role="user",
+                        content=(
+                            f"[SERVER: Your last message contains an incorrect date. "
+                            f"{correction_text}. Please correct yourself and ask the "
+                            f"customer what date they actually want — do not propose one.]"
+                        ),
+                    ),
+                ],
+                model=model,
+            )
+
         elapsed = time.perf_counter() - t0
         record_chat(
             model=model,
