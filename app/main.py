@@ -88,43 +88,39 @@ def _inject_next_weekday_hint(text: str) -> str | None:
             es_name = _WEEKDAY_NAME_ES[day_idx]
             month_es = _MONTHS_ES_INV[next_date.month]
             return (
-                f"[SERVER DATE INFO: The next {day_name} after today "
-                f"({date.today().strftime('%A %B %d, %Y')}) "
-                f"is {next_date.strftime('%B %d, %Y')} ({es_name} {next_date.day} de "
-                f"{month_es}). Use this exact date.]"
+                f"[SERVIDOR: El próximo {es_name} es el {next_date.day} de {month_es} "
+                f"de {next_date.year}. Usa esta fecha exacta en tu respuesta.]"
             )
     return None
 
 
-def _detect_weekday_date_mismatch(text: str) -> str | None:
-    """Return a warning string if the message contains a weekday+date that don't match."""
+def _detect_weekday_date_mismatch(text: str) -> dict | None:
+    """Return mismatch info dict if the message contains a weekday+date that don't match."""
     text_lower = text.lower()
     all_weekdays = {**_WEEKDAYS_ES, **_WEEKDAYS_EN}
 
     for day_name, day_idx in all_weekdays.items():
         if day_name not in text_lower:
             continue
-        # Look for a day number near the weekday mention (e.g. "jueves 15", "thursday the 15th")
         numbers = re.findall(r"\b([12]?\d)\b", text_lower)
         for num_str in numbers:
             day_num = int(num_str)
             if not 1 <= day_num <= 31:
                 continue
-            # Find the next date with this day number
             today = date.today()
             for delta in range(0, 366):
                 candidate = today + timedelta(days=delta)
                 if candidate.day == day_num:
                     actual_idx = candidate.weekday()
                     if actual_idx != day_idx:
-                        actual_es = _WEEKDAY_NAME_ES[actual_idx]
-                        actual_en = _WEEKDAY_NAME_EN[actual_idx]
-                        return (
-                            f"[SERVER DATE CHECK: The customer said '{day_name} {day_num}' "
-                            f"but {candidate.strftime('%B %d, %Y')} is a {actual_en} ({actual_es}), "
-                            f"NOT {day_name}. You MUST point this out immediately before asking anything else.]"
-                        )
-                    break  # date found and it matches — no warning needed
+                        return {
+                            "said": day_name,
+                            "actual_es": _WEEKDAY_NAME_ES[actual_idx],
+                            "actual_en": _WEEKDAY_NAME_EN[actual_idx],
+                            "date": candidate,
+                            "month_es": _MONTHS_ES_INV[candidate.month],
+                        }
+                    break
     return None
 
 @asynccontextmanager
@@ -237,22 +233,26 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
 
     # Server-side date check: if the last user message contains a weekday+date
     # mismatch, return the correction immediately — no LLM call, no hallucination risk.
-    warning = _detect_weekday_date_mismatch(last_user_text)
-    if warning:
-        log.info("date_mismatch_detected", warning=warning)
-        # Extract the human-readable part of the warning for the response
-        correction = re.search(r"but (.+?)\. You MUST", warning)
-        correction_text = correction.group(1) if correction else warning
+    mismatch = _detect_weekday_date_mismatch(last_user_text)
+    if mismatch:
+        log.info("date_mismatch_detected", mismatch=mismatch)
+        d = mismatch
+        in_spanish = any(w in last_user_text.lower() for w in _WEEKDAYS_ES)
+        if in_spanish:
+            reply = (
+                f"El {d['date'].day} de {d['month_es']} es {d['actual_es']}, no {d['said']}. "
+                f"¿Quieres reservar para ese {d['actual_es']} {d['date'].day} de {d['month_es']}, "
+                f"o prefieres otra fecha?"
+            )
+        else:
+            reply = (
+                f"{d['date'].strftime('%B %d')} is a {d['actual_en']}, not {d['said']}. "
+                f"Would you like to book for {d['actual_en']} {d['date'].strftime('%B %d')}, "
+                f"or a different date?"
+            )
         dummy_metrics = ChatMetrics(
             model=model, prompt_tokens=0, output_tokens=0,
             total_duration_s=0, eval_duration_s=0, tokens_per_second=0,
-        )
-        reply = (
-            f"Hay un error en la fecha: {correction_text}. "
-            f"¿Quieres reservar para ese día real, o prefieres una fecha diferente?"
-        ) if any(w in last_user_text.lower() for w in _WEEKDAYS_ES) else (
-            f"There's a date error: {correction_text}. "
-            f"Would you like to book for that actual day, or a different date?"
         )
         return ChatResponseAPI(text=reply, tool_calls=[], metrics=dummy_metrics)
 
@@ -309,19 +309,19 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponseAPI:
 
         # Post-response check: if the model's own reply contains a bad weekday/date,
         # re-prompt it to correct itself before returning to the client.
-        assistant_warning = _detect_weekday_date_mismatch(result.text)
-        if assistant_warning:
-            correction = re.search(r"but (.+?)\. You MUST", assistant_warning)
-            correction_text = correction.group(1) if correction else assistant_warning
+        assistant_mismatch = _detect_weekday_date_mismatch(result.text)
+        if assistant_mismatch:
+            d = assistant_mismatch
             result = await chat_messages(
                 messages + [
                     Message(role="assistant", content=result.text),
                     Message(
                         role="user",
                         content=(
-                            f"[SERVER: Your last message contains an incorrect date. "
-                            f"{correction_text}. Please correct yourself and ask the "
-                            f"customer what date they actually want — do not propose one.]"
+                            f"[SERVIDOR: Tu respuesta contiene una fecha incorrecta. "
+                            f"El {d['date'].day} de {d['month_es']} es {d['actual_es']}, "
+                            f"no {d['said']}. Corrígete y pregunta al cliente qué fecha prefiere. "
+                            f"No propongas fechas, pregunta al cliente.]"
                         ),
                     ),
                 ],
