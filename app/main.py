@@ -35,7 +35,7 @@ from app.tools import TOOLS_SCHEMA, execute_tool, init_db, list_appointments
 
 configure_logging()
 log = structlog.get_logger()
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 APP_INFO.labels(version=APP_VERSION).set(1)
 
 BASE_DIR = Path(__file__).parent
@@ -250,7 +250,10 @@ async def health() -> dict:
 
 @app.get("/info")
 async def info() -> dict:
+    from datetime import date as _date
     return {
+        "version": APP_VERSION,
+        "server_date": str(_date.today()),
         "default_model": DEFAULT_MODEL,
         "allowed_models": sorted(ALLOWED_MODELS),
         "system_prompt_chars": len(SYSTEM_PROMPT),
